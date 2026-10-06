@@ -491,6 +491,9 @@ function setShuffle(on) {
 function setPlaying(on) {
   play.playing = on;
   document.body.classList.toggle('playing', on);
+  if (on) keepAlive.play().catch(() => {});
+  else keepAlive.pause();
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = on ? 'playing' : 'paused';
   const s = play.current;
   document.title = s ? `${on ? '▶ ' : ''}${s.title} · ${s.artistStr}` : '좋아요한 곡';
 }
@@ -537,6 +540,15 @@ function showNowPlaying(s) {
   updateQueueInfo();
   setPlaying(play.playing);
   renderFavControls();
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: s.title,
+      artist: s.artistStr,
+      album: s.album || '',
+      // 목록용 작은 썸네일 대신 큰 이미지를 요청한다(lh3 주소만 크기를 바꿀 수 있다).
+      artwork: s.thumb ? [{ src: s.thumb.replace(/=w\d+-h\d+/, '=w544-h544') }] : [],
+    });
+  }
 }
 
 function updateQueueInfo() {
@@ -554,6 +566,41 @@ function locateCurrent() {
 function openInYtm(s) {
   if (ytPlayer && play.playing) ytPlayer.pauseVideo();
   window.open(`https://music.youtube.com/watch?v=${encodeURIComponent(s.id)}`, '_blank', 'noopener');
+}
+
+// ---------- 미디어 키 ----------
+// 키보드의 재생/다음곡/이전곡 키는 keydown이 아니라 Media Session으로 들어온다.
+// 소리가 YouTube iframe에서만 나면 브라우저가 키를 iframe으로 보내서 다음곡/이전곡이 먹지 않으므로,
+// 이 페이지에서도 무음 오디오를 함께 재생해 키가 이 페이지로 오게 한다.
+function silentWavUrl(seconds) {
+  const rate = 8000;
+  const n = rate * seconds;
+  const v = new DataView(new ArrayBuffer(44 + n));
+  const str = (at, text) => [...text].forEach((c, i) => v.setUint8(at + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  str(36, 'data'); v.setUint32(40, n, true);
+  new Uint8Array(v.buffer, 44).fill(128); // 8비트 PCM에서 128이 무음
+  return URL.createObjectURL(new Blob([v.buffer], { type: 'audio/wav' }));
+}
+
+// 크롬은 5초보다 짧은 소리는 미디어 키 대상으로 치지 않아서 10초짜리를 반복한다.
+const keepAlive = new Audio(silentWavUrl(10));
+keepAlive.loop = true;
+
+if ('mediaSession' in navigator) {
+  const handlers = {
+    play: () => { if (!play.playing) togglePlay(); },
+    pause: () => { if (play.playing) togglePlay(); },
+    nexttrack: () => step(1),
+    previoustrack: prev,
+  };
+  for (const [action, fn] of Object.entries(handlers)) {
+    try {
+      navigator.mediaSession.setActionHandler(action, fn);
+    } catch { /* 브라우저가 지원하지 않는 동작 */ }
+  }
 }
 
 // ---------- 볼륨 ----------
