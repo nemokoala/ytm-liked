@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>좋아요한 곡</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23e5283a' d='M12 21s-7.5-4.6-10-9.3C.4 8.6 2.3 4.5 6.2 4.5c2.2 0 3.9 1.2 4.8 2.9.9-1.7 2.6-2.9 4.8-2.9 3.9 0 5.8 4.1 4.2 7.2C19.5 16.4 12 21 12 21z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <div class="bar">
+        <h1>좋아요한 곡</h1>
+        <span id="summary" class="summary"></span>
+        <span class="grow"></span>
+        <span id="synced" class="synced"></span>
+        <button id="refresh" class="btn" title="YouTube Music에서 다시 불러오기">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+          <span>새로고침</span>
+        </button>
+        <button id="settings" class="btn icon" title="YouTube Music 연결 설정">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+      <div class="bar">
+        <label class="search">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" type="search" placeholder="제목, 아티스트, 앨범 검색 (초성 검색 가능)" autocomplete="off" spellcheck="false">
+          <kbd>/</kbd>
+        </label>
+        <div id="chips" class="chips" hidden></div>
+        <span class="grow"></span>
+        <button id="playAll" class="btn" title="지금 보이는 목록을 순서대로 재생">
+          <svg class="ico fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>
+          <span>재생</span>
+        </button>
+        <button id="shuffleAll" class="btn" title="지금 보이는 목록을 섞어서 재생">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          <span>셔플</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="main">
+      <section class="listwrap">
+        <div id="cols" class="cols">
+          <button data-sort="liked" class="c-num" title="좋아요한 순서 (1 = 가장 최근)">#</button>
+          <button data-sort="title" class="c-title">제목</button>
+          <button data-sort="artist" class="c-artist">아티스트</button>
+          <button data-sort="album" class="c-album">앨범</button>
+          <button data-sort="dur" class="c-dur" title="재생 시간">길이</button>
+        </div>
+        <div id="list" class="list">
+          <div id="spacer"><div id="rows"></div></div>
+          <div id="empty" class="empty" hidden></div>
+        </div>
+      </section>
+
+      <aside id="player" class="player" hidden>
+        <div class="video"><div id="yt"></div></div>
+        <div class="np">
+          <div id="npTitle" class="np-title"></div>
+          <div id="npSub" class="np-sub"></div>
+        </div>
+        <div class="progress">
+          <span id="cur">0:00</span>
+          <input id="seek" class="slider" type="range" min="0" max="1" value="0" step="1" aria-label="재생 위치">
+          <span id="tot">0:00</span>
+        </div>
+        <div class="controls">
+          <button id="btnShuffle" class="ctl" title="셔플 (S)">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          </button>
+          <button id="btnPrev" class="ctl" title="이전 곡 (P)">
+            <svg class="ico fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg>
+          </button>
+          <button id="btnPlay" class="ctl big" title="재생/일시정지 (Space)">
+            <svg class="ico fill i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            <svg class="ico fill i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>
+          </button>
+          <button id="btnNext" class="ctl" title="다음 곡 (N)">
+            <svg class="ico fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg>
+          </button>
+          <button id="btnLocate" class="ctl" title="목록에서 현재 곡 찾기 (L)">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          </button>
+        </div>
+        <div id="volume" class="volume" title="휠로도 조절돼요 (− / + 키, 음소거 M)">
+          <button id="btnMute" class="ctl" data-level="high" title="음소거 (M)">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path class="spk" d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path class="w1" d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/><path class="w2" d="M18 7a7 7 0 0 1 0 10"/><path class="x" d="m16 9.5 5 5m0-5-5 5"/></svg>
+          </button>
+          <input id="vol" class="slider" type="range" min="0" max="100" step="1" value="100" aria-label="볼륨">
+          <span id="volVal">100</span>
+        </div>
+        <div class="np-foot">
+          <span id="queueInfo"></span>
+          <a id="openYtm" href="#" target="_blank" rel="noopener">YouTube Music에서 열기 ↗</a>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <dialog id="setup">
+    <form id="setupForm" class="setup">
+      <h2>YouTube Music 연결</h2>
+      <p class="muted">로그인된 브라우저에서 요청 헤더를 한 번만 복사해 오면 돼요. 비밀번호는 필요 없어요.</p>
+      <ol class="steps">
+        <li>크롬이나 엣지에서 <a href="https://music.youtube.com" target="_blank" rel="noopener">music.youtube.com</a>을 열고 로그인돼 있는지 확인하세요.</li>
+        <li><kbd>F12</kbd>로 개발자 도구를 열고 <b>Network(네트워크)</b> 탭에서 필터 칸에 <code>browse</code>를 입력하세요.</li>
+        <li>YouTube Music 화면에서 <b>보관함</b> 같은 메뉴를 하나 눌러 요청이 생기게 하세요.</li>
+        <li>목록에 나온 <code>browse?…</code> 요청을 우클릭하고 <b>Copy → Copy as cURL (bash)</b>를 누르세요. <span class="muted">(cmd 말고 bash예요. 메뉴에 Copy request headers가 있으면 그걸 눌러도 돼요.)</span></li>
+        <li>아래 칸에 붙여넣고 <b>연결</b>을 누르세요.</li>
+      </ol>
+      <textarea id="headers" rows="7" spellcheck="false" placeholder="curl 'https://music.youtube.com/youtubei/v1/browse?…' \&#10;  -H 'accept: */*' \&#10;  -H 'authorization: SAPISIDHASH …' \&#10;  -b '…' \&#10;  …"></textarea>
+      <p class="note">헤더에는 로그인 쿠키가 들어 있어요. 이 PC의 <code>data/browser.json</code>에만 저장되고 다른 곳으로 보내지 않아요. 다른 사람에게 공유하지 마세요. 유튜브에서 로그아웃하면 다시 연결해야 해요.</p>
+      <p id="setupErr" class="err" hidden></p>
+      <div class="actions">
+        <button type="button" id="disconnect" class="btn danger" hidden>연결 해제</button>
+        <button type="button" id="resetBlocked" class="btn" hidden></button>
+        <span class="grow"></span>
+        <button type="button" id="setupCancel" class="btn">닫기</button>
+        <button type="submit" id="connect" class="btn primary">연결</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
