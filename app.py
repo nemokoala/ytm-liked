@@ -25,11 +25,25 @@ STATIC_DIR = ROOT / "static"
 DATA_DIR = ROOT / "data"
 AUTH_FILE = DATA_DIR / "browser.json"
 CACHE_FILE = DATA_DIR / "liked.json"
+FAV_FILE = DATA_DIR / "favorites.json"
+# 즐겨찾기는 내 YouTube Music 계정의 비공개 재생목록에 저장한다. 다른 PC에서도 이 제목으로 찾는다.
+FAV_TITLE = "즐겨찾기 (좋아요 뷰어)"
+FAV_DESCRIPTION = "좋아요 뷰어 앱의 즐겨찾기예요. 앱에서 별을 누르면 여기에 추가되고 빠져요."
 HOST = "127.0.0.1"
 PORT = 8765
 
+SESSION_EXPIRED = (
+    "YouTube Music 로그인이 풀렸어요. 크롬(엣지)에서 복사한 연결은 크롬 보안 기능(DBSC) 때문에 "
+    "10분쯤 뒤 끊겨요. 파이어폭스에서 로그인한 뒤 헤더를 복사해 다시 연결해 주세요."
+)
+CHROME_WARNING = (
+    "연결됐지만, 크롬(엣지)에서 복사한 연결은 크롬 보안 기능 때문에 10분쯤 뒤 끊겨요. "
+    "오래 쓰려면 파이어폭스에서 복사해 다시 연결해 주세요."
+)
+
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 refresh_lock = threading.Lock()
+fav_lock = threading.Lock()  # 추가/삭제가 겹쳐서 즐겨찾기 파일을 덮어쓰지 않도록 한 번에 하나씩 처리한다
 
 
 def read_cache() -> dict | None:
@@ -49,6 +63,20 @@ def write_cache(data: dict) -> None:
 def short(err: Exception, limit: int = 300) -> str:
     text = str(err).strip() or type(err).__name__
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def is_signed_out(err: Exception) -> bool:
+    # 로그인이 풀리면 YouTube Music이 'Sign in' 안내 화면을 돌려줘서 ytmusicapi 파싱이 실패한다.
+    text = str(err)
+    return "signInEndpoint" in text or "Sign in" in text
+
+
+def yt_error(err: Exception, what: str) -> HTTPException:
+    if isinstance(err, HTTPException):
+        return err
+    if is_signed_out(err):
+        return HTTPException(401, SESSION_EXPIRED)
+    return HTTPException(502, f"{what}\n({short(err)})")
 
 
 def pick_thumb(thumbs: list[dict] | None) -> str | None:
@@ -116,6 +144,8 @@ def refresh():
         write_cache(data)
         return data
     except Exception as e:
+        if is_signed_out(e):
+            raise HTTPException(401, SESSION_EXPIRED)
         raise HTTPException(
             502,
             "YouTube Music에서 목록을 불러오지 못했어요. 로그인이 만료됐다면 설정에서 다시 연결해 주세요.\n"
@@ -191,13 +221,161 @@ def connect(body: AuthBody):
             f"로그인된 상태에서 새로 복사해 주세요.\n({short(e)})",
         )
     tmp.replace(AUTH_FILE)
-    return {"ok": True}
+    # 크롬 계열(엣지 포함)은 user-agent에 Chrome/이 들어 있다. 파이어폭스는 DBSC가 없어서 오래 유지된다.
+    user_agent = saved.get("user-agent", "")
+    return {"ok": True, "warning": CHROME_WARNING if "Chrome/" in user_agent and "Firefox/" not in user_agent else None}
 
 
 @app.delete("/api/auth")
 def disconnect():
     AUTH_FILE.unlink(missing_ok=True)
     return {"ok": True}
+
+
+# ---------- 즐겨찾기 ----------
+VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+
+
+def read_favs() -> dict:
+    """playlistId: 즐겨찾기 재생목록 ID, items: {videoId: setVideoId(재생목록에서 뺄 때 필요)}"""
+    try:
+        favs = json.loads(FAV_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        favs = {}
+    return {"playlistId": favs.get("playlistId"), "items": favs.get("items") or {}}
+
+
+def write_favs(favs: dict) -> None:
+    DATA_DIR.mkdir(exist_ok=True)
+    tmp = FAV_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(favs, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(FAV_FILE)
+
+
+def fav_response(favs: dict) -> dict:
+    return {"ids": list(favs["items"]), "playlistId": favs["playlistId"]}
+
+
+def yt_client() -> YTMusic:
+    if not AUTH_FILE.exists():
+        raise HTTPException(401, "YouTube Music 연결 정보가 없어요. 먼저 연결해 주세요.")
+    return YTMusic(str(AUTH_FILE))
+
+
+def pull_favs(yt: YTMusic, favs: dict) -> dict:
+    """YouTube Music의 즐겨찾기 재생목록을 다시 읽는다. 다른 PC에서 바꾼 내용도 여기서 들어온다."""
+    playlist_id, playlist = favs["playlistId"], None
+    if playlist_id:
+        try:
+            playlist = yt.get_playlist(playlist_id, limit=None)
+        except Exception as e:
+            if is_signed_out(e):
+                raise
+            playlist_id = None  # 재생목록을 지웠거나 접근할 수 없으면 제목으로 다시 찾는다
+    if not playlist_id:
+        playlist_id = next(
+            (p["playlistId"] for p in yt.get_library_playlists(limit=None) if p.get("title") == FAV_TITLE), None
+        )
+        playlist = yt.get_playlist(playlist_id, limit=None) if playlist_id else None
+    tracks = (playlist or {}).get("tracks") or []
+    return {"playlistId": playlist_id, "items": {t["videoId"]: t.get("setVideoId") for t in tracks if t.get("videoId")}}
+
+
+def check_video_id(video_id: str) -> None:
+    if not VIDEO_ID.fullmatch(video_id):
+        raise HTTPException(400, "잘못된 곡 ID예요.")
+
+
+@app.get("/api/favorites")
+def favorites():
+    return fav_response(read_favs())
+
+
+@app.post("/api/favorites/sync")
+def sync_favorites():
+    with fav_lock:
+        try:
+            favs = pull_favs(yt_client(), read_favs())
+        except Exception as e:
+            raise yt_error(e, "즐겨찾기를 불러오지 못했어요.") from e
+        write_favs(favs)
+        return fav_response(favs)
+
+
+def ensure_playlist(yt: YTMusic, favs: dict) -> dict:
+    if not favs["playlistId"]:
+        favs = pull_favs(yt, favs)  # 다른 PC에서 이미 만들었을 수 있다
+    if not favs["playlistId"]:
+        playlist_id = yt.create_playlist(FAV_TITLE, FAV_DESCRIPTION, privacy_status="PRIVATE")
+        if not isinstance(playlist_id, str):
+            raise RuntimeError(f"재생목록을 만들지 못했어요: {str(playlist_id)[:200]}")
+        favs = {"playlistId": playlist_id, "items": {}}
+    return favs
+
+
+def add_video(yt: YTMusic, favs: dict, video_id: str) -> None:
+    # duplicates=True면 이미 들어 있는 곡은 건너뛴다(다른 PC에서 먼저 추가한 경우).
+    result = yt.add_playlist_items(favs["playlistId"], [video_id], duplicates=True)
+    if not isinstance(result, dict) or "SUCCEEDED" not in str(result.get("status")):
+        raise RuntimeError(f"YouTube Music 응답: {str(result)[:200]}")
+    added = next((r for r in result.get("playlistEditResults") or [] if r and r.get("videoId") == video_id), None)
+    favs["items"][video_id] = added.get("setVideoId") if added else None
+
+
+def remove_video(yt: YTMusic, favs: dict, video_id: str) -> None:
+    set_video_id = favs["items"].get(video_id)
+    if favs["playlistId"] and set_video_id:
+        result = yt.remove_playlist_items(favs["playlistId"], [{"videoId": video_id, "setVideoId": set_video_id}])
+        if "SUCCEEDED" not in str(result):
+            raise RuntimeError(f"YouTube Music 응답: {str(result)[:200]}")
+    favs["items"].pop(video_id, None)
+
+
+@app.put("/api/favorites/{video_id}")
+def add_favorite(video_id: str):
+    check_video_id(video_id)
+    with fav_lock:
+        favs = read_favs()
+        try:
+            yt = yt_client()
+            favs = ensure_playlist(yt, favs)
+            if video_id not in favs["items"]:
+                try:
+                    add_video(yt, favs, video_id)
+                except Exception as e:
+                    if is_signed_out(e):
+                        raise
+                    # 다른 PC나 휴대폰에서 재생목록을 지웠을 수 있다. 다시 찾아보고 한 번 더 시도한다.
+                    favs = ensure_playlist(yt, pull_favs(yt, favs))
+                    if video_id not in favs["items"]:
+                        add_video(yt, favs, video_id)
+        except Exception as e:
+            raise yt_error(e, "즐겨찾기에 추가하지 못했어요.") from e
+        write_favs(favs)
+        return fav_response(favs)
+
+
+@app.delete("/api/favorites/{video_id}")
+def remove_favorite(video_id: str):
+    check_video_id(video_id)
+    with fav_lock:
+        favs = read_favs()
+        try:
+            yt = yt_client()
+            if favs["playlistId"] and not favs["items"].get(video_id):
+                favs = pull_favs(yt, favs)  # 다른 PC에서 추가한 곡이면 setVideoId를 아직 모른다
+            try:
+                remove_video(yt, favs, video_id)
+            except Exception as e:
+                if is_signed_out(e):
+                    raise
+                # 재생목록이나 곡이 다른 곳에서 이미 지워졌을 수 있다. 최신 상태로 다시 시도한다.
+                favs = pull_favs(yt, favs)
+                remove_video(yt, favs, video_id)
+        except Exception as e:
+            raise yt_error(e, "즐겨찾기에서 빼지 못했어요.") from e
+        write_favs(favs)
+        return fav_response(favs)
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

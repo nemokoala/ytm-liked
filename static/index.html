@@ -29,6 +29,11 @@
           <input id="q" type="search" placeholder="제목, 아티스트, 앨범 검색 (초성 검색 가능)" autocomplete="off" spellcheck="false">
           <kbd>/</kbd>
         </label>
+        <button id="favOnly" class="btn fav-filter" aria-pressed="false" title="즐겨찾기한 곡만 보기">
+          <svg class="ico star" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/></svg>
+          <span>즐겨찾기</span>
+          <span id="favCount" class="count">0</span>
+        </button>
         <div id="chips" class="chips" hidden></div>
         <span class="grow"></span>
         <button id="playAll" class="btn" title="지금 보이는 목록을 순서대로 재생">
@@ -49,6 +54,7 @@
           <button data-sort="title" class="c-title">제목</button>
           <button data-sort="artist" class="c-artist">아티스트</button>
           <button data-sort="album" class="c-album">앨범</button>
+          <span class="c-fav" aria-hidden="true"></span>
           <button data-sort="dur" class="c-dur" title="재생 시간">길이</button>
         </div>
         <div id="list" class="list">
@@ -60,8 +66,13 @@
       <aside id="player" class="player" hidden>
         <div class="video"><div id="yt"></div></div>
         <div class="np">
-          <div id="npTitle" class="np-title"></div>
-          <div id="npSub" class="np-sub"></div>
+          <div class="np-text">
+            <div id="npTitle" class="np-title"></div>
+            <div id="npSub" class="np-sub"></div>
+          </div>
+          <button id="npFav" class="fav" aria-pressed="false" title="즐겨찾기 (F)">
+            <svg class="ico star" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/></svg>
+          </button>
         </div>
         <div class="progress">
           <span id="cur">0:00</span>
@@ -105,14 +116,15 @@
     <form id="setupForm" class="setup">
       <h2>YouTube Music 연결</h2>
       <p class="muted">로그인된 브라우저에서 요청 헤더를 한 번만 복사해 오면 돼요. 비밀번호는 필요 없어요.</p>
+      <p class="callout"><b>파이어폭스에서 복사하세요.</b> 크롬과 엣지는 보안 기능(DBSC) 때문에 복사한 로그인이 10분쯤 뒤 끊겨요.</p>
       <ol class="steps">
-        <li>크롬이나 엣지에서 <a href="https://music.youtube.com" target="_blank" rel="noopener">music.youtube.com</a>을 열고 로그인돼 있는지 확인하세요.</li>
-        <li><kbd>F12</kbd>로 개발자 도구를 열고 <b>Network(네트워크)</b> 탭에서 필터 칸에 <code>browse</code>를 입력하세요.</li>
+        <li>파이어폭스에서 <a href="https://music.youtube.com" target="_blank" rel="noopener">music.youtube.com</a>을 열고 로그인하세요. 연결한 뒤에도 파이어폭스에서 로그아웃하지 마세요.</li>
+        <li><kbd>F12</kbd> → <b>네트워크(Network)</b> 탭을 열고 필터 칸에 <code>browse</code>를 입력하세요.</li>
         <li>YouTube Music 화면에서 <b>보관함</b> 같은 메뉴를 하나 눌러 요청이 생기게 하세요.</li>
-        <li>목록에 나온 <code>browse?…</code> 요청을 우클릭하고 <b>Copy → Copy as cURL (bash)</b>를 누르세요. <span class="muted">(cmd 말고 bash예요. 메뉴에 Copy request headers가 있으면 그걸 눌러도 돼요.)</span></li>
-        <li>아래 칸에 붙여넣고 <b>연결</b>을 누르세요.</li>
+        <li><code>POST</code> <code>browse?…</code> 요청을 우클릭 → <b>값 복사 → 요청 헤더 복사</b>(Copy Value → Copy Request Headers)를 누르세요.</li>
+        <li>아래 칸에 붙여넣고 <b>연결</b>을 누르세요. cURL로 복사한 것도 돼요.</li>
       </ol>
-      <textarea id="headers" rows="7" spellcheck="false" placeholder="curl 'https://music.youtube.com/youtubei/v1/browse?…' \&#10;  -H 'accept: */*' \&#10;  -H 'authorization: SAPISIDHASH …' \&#10;  -b '…' \&#10;  …"></textarea>
+      <textarea id="headers" rows="7" spellcheck="false" placeholder="POST /youtubei/v1/browse?prettyPrint=false HTTP/2&#10;Host: music.youtube.com&#10;User-Agent: Mozilla/5.0 … Firefox/…&#10;Authorization: SAPISIDHASH …&#10;Cookie: …&#10;…"></textarea>
       <p class="note">헤더에는 로그인 쿠키가 들어 있어요. 이 PC의 <code>data/browser.json</code>에만 저장되고 다른 곳으로 보내지 않아요. 다른 사람에게 공유하지 마세요. 유튜브에서 로그아웃하면 다시 연결해야 해요.</p>
       <p id="setupErr" class="err" hidden></p>
       <div class="actions">

@@ -10,9 +10,11 @@
   --accent-weak: rgba(224, 38, 58, 0.09);
   --hover: rgba(0, 0, 0, 0.04);
   --danger: #c81e2f;
+  --star: #d99500;
+  --star-weak: rgba(217, 149, 0, 0.12);
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.14);
   --font: "Pretendard", "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
-  --grid: 52px minmax(0, 2.4fr) minmax(0, 1.4fr) minmax(0, 1.4fr) 52px;
+  --grid: 52px minmax(0, 2.4fr) minmax(0, 1.4fr) minmax(0, 1.4fr) 36px 52px;
   --row-h: 56px;
   color-scheme: light dark;
 }
@@ -30,6 +32,8 @@
     --accent-weak: rgba(255, 75, 92, 0.13);
     --hover: rgba(255, 255, 255, 0.05);
     --danger: #ff6b78;
+    --star: #f5bf3a;
+    --star-weak: rgba(245, 191, 58, 0.14);
     --shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   }
 }
@@ -310,6 +314,48 @@ code {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- 즐겨찾기 ---------- */
+.fav {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0; /* 즐겨찾기가 아닌 곡은 마우스를 올렸을 때만 보인다 */
+}
+.row:hover .fav, .fav.on, .fav:focus-visible { opacity: 1; }
+.fav:hover { background: var(--hover); color: var(--text); }
+.fav.on, .fav.on:hover { color: var(--star); }
+.fav.on .star { fill: currentColor; }
+.fav.busy { pointer-events: none; animation: pulse 0.8s ease-in-out infinite alternate; }
+@keyframes pulse { to { opacity: 0.35; } }
+@media (hover: none) { .fav { opacity: 1; } }
+.star { width: 18px; height: 18px; }
+
+.fav-filter .count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.fav-filter[aria-pressed="true"] {
+  border-color: var(--star);
+  background: var(--star-weak);
+  color: var(--star);
+  font-weight: 600;
+}
+.fav-filter[aria-pressed="true"] .star { fill: currentColor; }
+.fav-filter[aria-pressed="true"] .count { background: var(--star); color: var(--surface); }
+
 .eq {
   display: inline-flex;
   align-items: flex-end;
@@ -376,6 +422,13 @@ body:not(.playing) .eq i { animation-play-state: paused; }
   height: 100%;
   border: 0;
 }
+.np {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.np-text { flex: 1; min-width: 0; }
+.np .fav { opacity: 1; flex: none; margin-top: -4px; }
 .np-title {
   font-size: 17px;
   font-weight: 700;
@@ -520,6 +573,11 @@ textarea {
 }
 textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
 .note { font-size: 12px; color: var(--muted); }
+.callout {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-weak);
+}
 .err { color: var(--danger); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
@@ -563,7 +621,7 @@ textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent
   .player .video { grid-row: 1 / span 5; }
 }
 @media (max-width: 720px) {
-  :root { --grid: minmax(0, 1.4fr) minmax(0, 1fr) 46px; }
+  :root { --grid: minmax(0, 1.4fr) minmax(0, 1fr) 36px 46px; }
   .c-num, .c-album { display: none !important; }
   .top { padding: 12px 16px; }
   .player { grid-template-columns: minmax(0, 1fr); }

@@ -17,6 +17,7 @@ const els = {
   cur: $('#cur'), tot: $('#tot'), seek: $('#seek'),
   btnPlay: $('#btnPlay'), btnPrev: $('#btnPrev'), btnNext: $('#btnNext'),
   btnShuffle: $('#btnShuffle'), btnLocate: $('#btnLocate'),
+  favOnly: $('#favOnly'), favCount: $('#favCount'), npFav: $('#npFav'),
   volume: $('#volume'), vol: $('#vol'), volVal: $('#volVal'), btnMute: $('#btnMute'),
   queueInfo: $('#queueInfo'), openYtm: $('#openYtm'),
   setup: $('#setup'), setupForm: $('#setupForm'), headers: $('#headers'), setupErr: $('#setupErr'),
@@ -43,7 +44,11 @@ function save(key, value) {
 
 const prefs = { sort: 'liked', desc: false, shuffle: false, volume: 100, muted: false, ...load(PREFS_KEY, {}) };
 const blocked = new Set(load(BLOCKED_KEY, []));
-const state = { all: [], sorted: [], view: [], artist: null, album: null, authed: false, fetchedAt: null, loading: false };
+const state = {
+  all: [], sorted: [], view: [], artist: null, album: null, authed: false, fetchedAt: null, loading: false,
+  favs: new Set(), favOnly: false, favPlaylistId: null,
+};
+const pendingFavs = new Set(); // YouTube Music에 반영 중인 곡
 const play = { queue: [], order: [], pos: -1, current: null, playing: false, failStreak: 0, seeking: false };
 
 // ---------- 포맷 ----------
@@ -68,12 +73,12 @@ function relTime(ts) {
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 let toastTimer;
-function toast(message, isError = false) {
+function toast(message, isError = false, ms = isError ? 6000 : 3200) {
   els.toast.textContent = message;
   els.toast.classList.toggle('error', isError);
   els.toast.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => els.toast.classList.remove('show'), isError ? 6000 : 3200);
+  toastTimer = setTimeout(() => els.toast.classList.remove('show'), ms);
 }
 
 async function api(path, options = {}) {
@@ -111,7 +116,8 @@ function matcher() {
   // 자음만 입력한 단어는 초성으로, 나머지는 일반 문자열로 비교한다. NFKC는 호환 자모를 바꿔 버리므로 초성 판별 뒤에 적용한다.
   const tokens = els.q.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
     .map((t) => (isChoseong(t) ? { cho: true, t } : { cho: false, t: norm(t) }));
-  return (s) => (!state.artist || s.artists.includes(state.artist))
+  return (s) => (!state.favOnly || state.favs.has(s.id))
+    && (!state.artist || s.artists.includes(state.artist))
     && (!state.album || s.album === state.album)
     && tokens.every(({ cho, t }) => (cho ? s.cho : s.hay).includes(t));
 }
@@ -186,6 +192,8 @@ function renderEmpty() {
     html = '<strong>YouTube Music을 연결해 주세요</strong><span>연결하면 좋아요한 곡 전체가 여기에 한 번에 표시돼요.</span><button class="btn primary" data-action="setup">연결하기</button>';
   } else if (!state.all.length) {
     html = '<strong>좋아요한 곡이 없어요</strong><span>YouTube Music에서 좋아요를 누른 뒤 새로고침해 보세요.</span>';
+  } else if (!state.view.length && state.favOnly && !favCount()) {
+    html = '<strong>즐겨찾기한 곡이 없어요</strong><span>곡에 마우스를 올리고 오른쪽 ☆를 눌러 추가해 보세요.</span>';
   } else if (!state.view.length) {
     html = '<strong>검색 결과가 없어요</strong><span>다른 검색어를 입력하거나 필터를 해제해 보세요.</span>';
   }
@@ -230,7 +238,15 @@ function rowHtml(s, k) {
     + `<div class="c-title">${thumb}<span class="ellip"><span class="title">${esc(s.title)}</span>${s.explicit ? '<span class="badge">E</span>' : ''}</span></div>`
     + `<div class="c-artist ellip">${artists}</div>`
     + `<div class="c-album ellip">${album}</div>`
+    + `<div class="c-fav">${s.id ? favButton(s.id) : ''}</div>`
     + `<div class="c-dur">${s.dur ? fmtTime(s.dur) : ''}</div></div>`;
+}
+
+const STAR = '<svg class="ico star" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/></svg>';
+function favButton(id) {
+  const on = state.favs.has(id);
+  return `<button class="fav${on ? ' on' : ''}${pendingFavs.has(id) ? ' busy' : ''}" data-fav="${esc(id)}" `
+    + `aria-pressed="${on}" title="${on ? '즐겨찾기에서 빼기' : '즐겨찾기에 추가'}">${STAR}</button>`;
 }
 
 function setData(data, { keepScroll = false } = {}) {
@@ -239,6 +255,88 @@ function setData(data, { keepScroll = false } = {}) {
   resort();
   refilter({ keepScroll });
   renderSynced();
+  renderFavControls();
+}
+
+// ---------- 즐겨찾기 ----------
+// 즐겨찾기는 내 YouTube Music 계정의 비공개 재생목록에 저장돼서 다른 PC와 휴대폰 앱에서도 똑같다.
+const favCount = () => state.all.reduce((n, s) => n + (state.favs.has(s.id) ? 1 : 0), 0);
+
+function renderFavControls() {
+  els.favCount.textContent = fmtNum(favCount());
+  els.favOnly.setAttribute('aria-pressed', state.favOnly);
+  const id = play.current?.id;
+  const on = !!id && state.favs.has(id);
+  els.npFav.classList.toggle('on', on);
+  els.npFav.classList.toggle('busy', !!id && pendingFavs.has(id));
+  els.npFav.setAttribute('aria-pressed', on);
+  els.npFav.title = on ? '즐겨찾기에서 빼기 (F)' : '즐겨찾기에 추가 (F)';
+}
+
+function renderFavs() {
+  renderFavControls();
+  if (state.favOnly) {
+    refilter({ keepScroll: true }); // 즐겨찾기만 보는 중이면 뺀 곡은 바로 목록에서 사라진다
+  } else {
+    range = null;
+    renderRows();
+  }
+}
+
+// 서버가 돌려준 목록으로 맞추되, 아직 반영 중인 곡은 지금 화면 상태를 유지한다.
+function applyFavs(res) {
+  const next = new Set(res.ids);
+  for (const id of pendingFavs) {
+    if (state.favs.has(id)) next.add(id);
+    else next.delete(id);
+  }
+  state.favs = next;
+  state.favPlaylistId = res.playlistId;
+  renderFavs();
+}
+
+async function toggleFav(id) {
+  if (!id || pendingFavs.has(id)) return;
+  if (!state.authed) {
+    openSetup('즐겨찾기는 YouTube Music 재생목록에 저장돼서 연결이 필요해요.');
+    return;
+  }
+  const adding = !state.favs.has(id);
+  if (adding) state.favs.add(id);
+  else state.favs.delete(id);
+  pendingFavs.add(id); // 응답을 기다리지 않고 화면에 먼저 반영한다
+  renderFavs();
+  try {
+    const res = await api(`/api/favorites/${encodeURIComponent(id)}`, { method: adding ? 'PUT' : 'DELETE' });
+    pendingFavs.delete(id);
+    const created = !state.favPlaylistId && res.playlistId; // 연달아 눌러도 처음 응답에서만 알린다
+    applyFavs(res);
+    if (created) toast('YouTube Music에 비공개 재생목록 "즐겨찾기 (좋아요 뷰어)"를 만들었어요.');
+  } catch (err) {
+    pendingFavs.delete(id);
+    if (adding) state.favs.delete(id);
+    else state.favs.add(id);
+    renderFavs();
+    if (err.status === 401) {
+      state.authed = false;
+      openSetup(err.message);
+    } else {
+      toast(err.message, true);
+    }
+  }
+}
+
+// 다른 PC나 휴대폰에서 바꾼 즐겨찾기를 가져온다. 실패해도 저장된 즐겨찾기로 계속 쓴다.
+async function syncFavs() {
+  if (!state.authed) return;
+  try {
+    applyFavs(await api('/api/favorites/sync', { method: 'POST' }));
+  } catch (err) {
+    if (err.status === 401) {
+      state.authed = false;
+      toast(`${err.message}\n(⚙ 설정에서 다시 연결할 수 있어요)`, true, 10000);
+    }
+  }
 }
 
 // ---------- 동기화 ----------
@@ -258,6 +356,7 @@ async function refresh() {
     toast(before
       ? `동기화했어요 · ${fmtNum(state.all.length)}곡${diff ? ` (${diff > 0 ? '+' : ''}${fmtNum(diff)})` : ''}`
       : `${fmtNum(state.all.length)}곡을 불러왔어요.`);
+    syncFavs();
   } catch (err) {
     if (err.status === 401) {
       state.authed = false;
@@ -437,6 +536,7 @@ function showNowPlaying(s) {
   els.seek.style.setProperty('--p', '0%');
   updateQueueInfo();
   setPlaying(play.playing);
+  renderFavControls();
 }
 
 function updateQueueInfo() {
@@ -536,19 +636,23 @@ els.setupForm.addEventListener('submit', async (e) => {
   if (!headers) return openSetup('복사한 요청 헤더를 붙여넣어 주세요.');
   els.connect.disabled = true;
   els.connect.textContent = '확인 중…';
+  let result;
   try {
-    await api('/api/auth', { method: 'POST', body: JSON.stringify({ headers }) });
-    state.authed = true;
-    els.headers.value = '';
-    els.setup.close();
-    toast('연결됐어요. 좋아요 목록을 불러올게요.');
-    refresh();
+    result = await api('/api/auth', { method: 'POST', body: JSON.stringify({ headers }) });
   } catch (err) {
     openSetup(err.message);
+    return;
   } finally {
     els.connect.disabled = false;
     els.connect.textContent = '연결';
   }
+  state.authed = true;
+  els.headers.value = '';
+  els.setup.close();
+  toast('연결됐어요. 좋아요 목록을 불러올게요.');
+  await refresh();
+  // 동기화 결과 알림에 가려지지 않도록 경고는 마지막에 띄운다.
+  if (result.warning) toast(result.warning, true, 12000);
 });
 
 els.disconnect.addEventListener('click', async () => {
@@ -583,6 +687,11 @@ new ResizeObserver(() => {
 }).observe(els.list);
 
 els.rows.addEventListener('click', (e) => {
+  const favBtn = e.target.closest('[data-fav]');
+  if (favBtn) {
+    toggleFav(favBtn.dataset.fav);
+    return;
+  }
   const link = e.target.closest('a[data-artist], a[data-album]');
   if (link) {
     e.preventDefault();
@@ -636,6 +745,12 @@ els.btnNext.addEventListener('click', () => step(1));
 els.btnPrev.addEventListener('click', prev);
 els.btnShuffle.addEventListener('click', () => setShuffle(!prefs.shuffle));
 els.btnLocate.addEventListener('click', locateCurrent);
+els.npFav.addEventListener('click', () => toggleFav(play.current?.id));
+els.favOnly.addEventListener('click', () => {
+  state.favOnly = !state.favOnly;
+  renderFavControls();
+  refilter();
+});
 
 els.seek.addEventListener('input', () => {
   play.seeking = true;
@@ -684,6 +799,7 @@ document.addEventListener('keydown', (e) => {
     case 'KeyS': setShuffle(!prefs.shuffle); break;
     case 'KeyL': locateCurrent(); break;
     case 'KeyM': toggleMute(); break;
+    case 'KeyF': toggleFav(play.current?.id); break;
     case 'Minus':
     case 'NumpadSubtract': nudgeVolume(-5); break;
     case 'Equal':
@@ -699,13 +815,17 @@ async function init() {
   els.btnShuffle.classList.toggle('on', prefs.shuffle);
   renderVolume();
   try {
-    const status = await api('/api/status');
+    const [status, favs] = await Promise.all([api('/api/status'), api('/api/favorites')]);
     state.authed = status.authed;
+    state.favs = new Set(favs.ids); // 저장해 둔 즐겨찾기로 먼저 그린다
+    state.favPlaylistId = favs.playlistId;
     if (status.count) setData(await api('/api/liked'));
     else renderList();
+    renderFavControls();
     const stale = !status.fetchedAt || Date.now() / 1000 - status.fetchedAt > STALE_AFTER;
-    if (status.authed && stale) refresh(); // 저장된 목록을 먼저 보여주고 뒤에서 새로 불러온다
-    else if (!status.authed && !status.count) openSetup();
+    if (status.authed && stale) refresh(); // 저장된 목록을 먼저 보여주고 뒤에서 새로 불러온다(즐겨찾기도 함께)
+    else if (status.authed) syncFavs();
+    else if (!status.count) openSetup();
   } catch (err) {
     toast(`서버에 연결하지 못했어요. app.py가 실행 중인지 확인해 주세요.\n(${err.message})`, true);
   }
